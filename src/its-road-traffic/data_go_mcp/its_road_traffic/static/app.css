@@ -25,6 +25,7 @@
 
   --ex-shield: #1d4ed8;
   --its-shield: #0f766e;
+  --cam: #4f46e5;
 
   --radius: 12px;
   --shadow: 0 1px 2px rgb(15 23 42 / .06), 0 4px 16px rgb(15 23 42 / .08);
@@ -58,6 +59,7 @@
     --k-etc: #94a3b8;
     --ex-shield: #3b82f6;
     --its-shield: #14b8a6;
+    --cam: #818cf8;
     --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 4px 16px rgb(0 0 0 / .35);
     color-scheme: dark;
   }
@@ -127,25 +129,34 @@ h1, h2, h3 { margin: 0; }
 .pane > * { flex-shrink: 0; }
 .layout[data-view="roads"] .roads-pane,
 .layout[data-view="detail"] .detail-pane,
-.layout[data-view="events"] .map-pane,
+.layout[data-view="map"] .map-pane,
 .layout[data-view="events"] .feed-pane,
+.layout[data-view="cctv"] .cctv-pane,
 .layout[data-view="alerts"] .alerts-pane { display: flex; flex-direction: column; }
-.roads-pane, .detail-pane, .feed-pane, .alerts-pane { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
-.layout[data-view="events"] .map-pane { flex: 0 0 42%; position: relative; }
+.roads-pane, .detail-pane, .feed-pane, .alerts-pane, .cctv-pane { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.layout[data-view="map"] .map-pane { flex: 1; }
 .map-slot:empty { display: none; }
 .detail-pane .map-slot .map-pane { display: block; position: relative; height: 38vh; min-height: 220px; border-radius: var(--radius); overflow: hidden; margin: 0 12px 12px; }
+/* CCTV 탭의 "전국 지도" 모드: 목록 대신 지도를 채운다 */
+.cctv-pane[data-mode="map"] { overflow: hidden; }
+.cctv-pane[data-mode="map"] .cctv-list-view { display: none; }
+.cctv-pane[data-mode="list"] .cctv-map-slot { display: none; }
+.cctv-map-slot { flex: 1 1 auto !important; position: relative; min-height: 0; }
+.cctv-map-slot .map-pane { display: block; position: absolute; inset: 0; }
+/* 상세·CCTV 안에 들어간 작은 지도에서는 범례와 전국 보기 버튼을 숨긴다 */
+.map-slot .map-legend, .detail-pane .map-slot .map-btn { display: none; }
 .desktop-only { display: none !important; }
 
 /* ---------- 하단 탭 (모바일) ---------- */
 .tabbar {
   position: fixed; inset: auto 0 0 0; z-index: 1000;
   height: calc(var(--tabbar-h) + var(--safe-b)); padding-bottom: var(--safe-b);
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--line);
 }
 .tabbar button {
   position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  border: 0; background: transparent; color: var(--muted); font-size: 11.5px; font-weight: 600;
+  border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap;
 }
 .tabbar button[aria-current="page"] { color: var(--accent); }
 .tab-badge {
@@ -155,7 +166,7 @@ h1, h2, h3 { margin: 0; }
 }
 
 /* ---------- 노선 목록 ---------- */
-.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 12px 12px 0; background: var(--line); border-radius: 10px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; margin: 12px 12px 0; background: var(--line); border-radius: 10px; }
 .seg button { border: 0; border-radius: 8px; padding: 8px; background: transparent; font-weight: 700; color: var(--muted); }
 .seg button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / .1); }
 .list-tools { position: sticky; top: 0; z-index: 2; padding: 12px 12px 8px; background: var(--bg); }
@@ -213,12 +224,59 @@ h1, h2, h3 { margin: 0; }
 .list-empty { padding: 32px 16px; text-align: center; color: var(--muted); }
 .skeleton { height: 64px; margin-bottom: 8px; border-radius: var(--radius); background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
 
+/* ---------- 목록 전환 (데스크탑) ---------- */
+.side-switch { display: grid; grid-template-columns: 1fr 1fr; margin: 12px 12px 0; border-bottom: 1px solid var(--line); }
+.side-switch button { border: 0; background: transparent; padding: 8px 4px 10px; font-weight: 800; font-size: 15px; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.side-switch button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+
+/* ---------- CCTV ---------- */
+.cctv-head { display: flex; flex-direction: column; gap: 8px; }
+.mode { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 12px; }
+.mode button { display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px; font-weight: 700; font-size: 14px; color: var(--muted); }
+.mode button svg { width: 18px; height: 18px; }
+.mode button[aria-selected="true"] { background: var(--text); border-color: var(--text); color: var(--surface); }
+.cctv-list-view .list-tools { padding-bottom: 4px; }
+.cctv-list-view .updated.inline { margin-top: 8px; }
+.cctv-groups { list-style: none; margin: 0; padding: 0 12px 12px; }
+.cctv-group { margin-bottom: 8px; background: var(--surface); border-radius: var(--radius); overflow: hidden; }
+.cctv-group-head { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; background: transparent; text-align: left; }
+.cctv-group-head .g-name { font-weight: 700; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cctv-group-head .g-count { font-size: 12px; color: var(--muted); font-weight: 700; }
+.cctv-group-head .chev { width: 18px; height: 18px; color: var(--muted); transition: transform .15s; }
+.cctv-group.open .chev { transform: rotate(90deg); }
+.g-map { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 4px 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.cams { list-style: none; margin: 0; padding: 0 8px 8px; }
+.cam { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; cursor: pointer; }
+.cam + .cam { border-top: 1px solid var(--line); }
+.cam:hover { background: var(--surface-2); }
+.cam .play { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--cam); color: #fff; }
+.cam .play svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+.cam .c-name { font-size: 14px; font-weight: 600; min-width: 0; }
+.cam .c-sub { font-size: 12px; color: var(--muted); }
+.cam .c-dist { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.cam-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: var(--cam); box-shadow: 0 0 0 2px #fff inset; }
+.cam-btn { display: inline-flex; align-items: center; gap: 4px; border: 0; border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 700; background: var(--cam); color: #fff; }
+
+/* ---------- CCTV 플레이어 ---------- */
+.player { width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 24px 60px rgb(0 0 0 / .45); }
+.player::backdrop { background: rgb(2 6 23 / .6); }
+.player-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 14px 12px 10px 16px; }
+.player-head h2 { font-size: 17px; }
+.player-head .muted { margin: 0 0 2px; font-size: 12px; }
+.player-media { position: relative; aspect-ratio: 16 / 9; background: #000; display: grid; place-items: center; }
+.player-media video, .player-media img { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.player-status { margin: 0; padding: 8px 16px 0; min-height: 26px; font-size: 13px; color: var(--muted); }
+.player-status.error { color: var(--jam); }
+.player-actions { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; padding: 10px 12px 14px; }
+.player-actions .btn { padding: 8px 6px; font-size: 13px; text-align: center; text-decoration: none; color: var(--text); }
+.player-actions .btn:disabled { opacity: .4; }
+
 /* ---------- 지도 ---------- */
 .map-pane { position: relative; }
 .map { position: absolute; inset: 0; background: var(--surface-2); }
 .map-fallback { display: grid; place-items: center; height: 100%; color: var(--muted); font-size: 13px; padding: 16px; text-align: center; }
 .map-legend {
-  position: absolute; left: 8px; bottom: 26px; z-index: 500; max-width: calc(100% - 16px);
+  position: absolute; left: 8px; bottom: 30px; z-index: 5; max-width: calc(100% - 16px);
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 10px;
   background: color-mix(in srgb, var(--surface) 92%, transparent); border-radius: 8px; font-size: 11.5px; box-shadow: var(--shadow);
 }
@@ -226,12 +284,17 @@ h1, h2, h3 { margin: 0; }
 .map-legend .sep { width: 1px; height: 12px; background: var(--line); }
 .lg { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
 .mk-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.map-layers { position: absolute; left: 10px; top: 10px; z-index: 5; display: flex; gap: 6px; flex-wrap: wrap; max-width: calc(100% - 70px); }
+.map-layers button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 6px 11px; font-size: 12.5px; font-weight: 700; background: var(--surface); color: var(--muted); box-shadow: var(--shadow); }
+.map-layers button[aria-pressed="true"] { color: var(--text); }
+.map-layers button[aria-pressed="false"] { opacity: .6; }
+.map-layers button[aria-pressed="false"] i { filter: grayscale(1); opacity: .5; }
 .map-btn {
-  position: absolute; right: 10px; top: 10px; z-index: 500;
+  position: absolute; left: 10px; top: 48px; z-index: 5;
   border: 0; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700;
   background: var(--surface); color: var(--text); box-shadow: var(--shadow);
 }
-.mk { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 800 12px/1 system-ui; border: 2px solid #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .35); }
+.mk { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 800 12px/1 system-ui; border: 2px solid #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .35); cursor: pointer; }
 .mk.urgent { width: 30px; height: 30px; animation: pulse 1.8s infinite; }
 .mk.selected { outline: 3px solid var(--accent); outline-offset: 1px; }
 .kind-acc { --kc: var(--k-acc); }
@@ -241,9 +304,14 @@ h1, h2, h3 { margin: 0; }
 .kind-cor { --kc: var(--k-cor); }
 .kind-etc { --kc: var(--k-etc); }
 .mk, .mk-dot, .event-kind { background: var(--kc, var(--k-etc)); }
-.leaflet-popup-content { margin: 10px 12px; font: 13px/1.45 inherit; }
-.leaflet-container { font: inherit; background: var(--surface-2); }
-.popup-title { font-weight: 700; margin-bottom: 2px; }
+.maplibregl-map { font: inherit; }
+.maplibregl-popup-content { padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.maplibregl-popup-tip { border-top-color: var(--surface) !important; border-bottom-color: var(--surface) !important; }
+.maplibregl-popup-close-button { font-size: 18px; color: var(--muted); padding: 0 6px; }
+.popup-title { font-weight: 700; margin: 0 14px 2px 0; }
+.popup-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.popup-actions a, .popup-actions button { border: 1px solid var(--line); background: var(--surface-2); color: var(--text); border-radius: 8px; padding: 4px 8px; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; }
+.popup-actions .cam-btn { border-color: var(--cam); background: var(--cam); color: #fff; }
 
 /* ---------- 돌발 카드 ---------- */
 .pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 14px 16px 8px; }
@@ -337,8 +405,9 @@ h1, h2, h3 { margin: 0; }
   :root { --tabbar-h: 0px; --topbar-h: 56px; }
   .tabbar, #backBtn { display: none !important; }
   .desktop-only { display: revert !important; }
-  .seg.desktop-only { display: grid !important; }
+  .side-switch.desktop-only { display: grid !important; }
   .icon-btn.desktop-only { display: grid !important; }
+  .mobile-only { display: none !important; }
   .brand h1 { font-size: 18px; }
   .toasts { left: auto; top: auto; right: 16px; bottom: 16px; width: 380px; flex-direction: column-reverse; }
   .alert-banner { top: calc(var(--topbar-h) + 10px); left: 400px; right: 420px; border-radius: 12px; }
@@ -347,17 +416,20 @@ h1, h2, h3 { margin: 0; }
     display: grid;
     grid-template-columns: 340px minmax(0, 1fr) 400px;
     grid-template-rows: minmax(0, auto) minmax(0, 1fr);
-    grid-template-areas: "roads map detail" "roads map feed";
+    grid-template-areas: "side map detail" "side map feed";
   }
   .layout .pane { display: flex; flex-direction: column; }
-  .roads-pane { grid-area: roads; border-right: 1px solid var(--line); }
+  .roads-pane, .cctv-pane { grid-area: side; border-right: 1px solid var(--line); }
+  .layout[data-side="roads"] .cctv-pane, .layout[data-side="cctv"] .roads-pane { display: none; }
+  .cctv-pane .cctv-list-view { display: block !important; }
+  .cctv-pane .cctv-map-slot { display: none !important; }
+  .cctv-head .seg { margin-top: 10px; }
   .map-pane { grid-area: map; }
   .detail-pane { grid-area: detail; max-height: 62vh; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .detail-pane:has(.empty-state) { max-height: none; }
   .detail-pane .empty-state { padding: 20px; }
   .detail-pane .empty-state svg { width: 36px; height: 36px; }
   .feed-pane { grid-area: feed; border-left: 1px solid var(--line); }
-  .layout[data-view="events"] .map-pane { flex: none; }
 
   .alerts-pane {
     display: none !important;

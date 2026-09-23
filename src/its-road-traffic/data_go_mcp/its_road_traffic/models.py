@@ -3,8 +3,9 @@
 import hashlib
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 
 # 대한민국 전역 좌표 범위 (경도 X, 위도 Y). ITS API는 조회 영역이 필수다.
@@ -308,6 +309,126 @@ class EventResponse(BaseModel):
     """돌발상황 응답."""
 
     items: List[TrafficEvent] = Field(default_factory=list)
+    total_count: int = 0
+
+
+class CctvType(str, Enum):
+    """CCTV 영상 형식 (ITS API `cctvType` 파라미터)."""
+
+    STREAM = "1"  # 실시간 스트리밍 (HLS)
+    VIDEO = "2"  # 동영상 파일
+    IMAGE = "3"  # 정지 영상
+    STREAM_HTTPS = "4"  # 실시간 스트리밍 (HLS, HTTPS)
+    VIDEO_HTTPS = "5"  # 동영상 파일 (HTTPS)
+
+
+_CCTV_FIELDS = {
+    "cctvname": "name",
+    "cctvurl": "url",
+    "coordx": "coord_x",
+    "coordy": "coord_y",
+    "cctvformat": "format",
+    "cctvtype": "cctv_type",
+    "cctvresolution": "resolution",
+    "roadsectionid": "road_section_id",
+    "filecreatetime": "file_create_time",
+}
+
+
+def cctv_media_type(url: str, fmt: Optional[str]) -> str:
+    """재생 방식: ``hls``(m3u8), ``image``(정지영상), ``video``(mp4 등)."""
+    fmt_l = (fmt or "").lower()
+    path = urlparse(url or "").path.lower()
+    if "hls" in fmt_l or "m3u8" in fmt_l or path.endswith(".m3u8"):
+        return "hls"
+    if any(t in fmt_l for t in ("jpg", "jpeg", "png", "img", "image")) or path.endswith(
+        (".jpg", ".jpeg", ".png", ".svg")
+    ):
+        return "image"
+    if "mp4" in fmt_l or path.endswith(".mp4"):
+        return "video"
+    # 형식을 알 수 없으면 실시간 스트리밍(HLS)으로 본다
+    return "hls"
+
+
+class CctvCamera(BaseModel):
+    """CCTV 정보 (cctvInfo 응답 item). 응답 키가 소문자(cctvname)로 오므로 대소문자를 무시한다."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(default="", description="CCTV 명칭 (예: [경부선] 양재)")
+    url: str = Field(default="", description="영상 URL")
+    coord_x: Optional[float] = Field(None, description="경도")
+    coord_y: Optional[float] = Field(None, description="위도")
+    format: Optional[str] = Field(None, description="영상 형식 (HLS, MP4, JPEG ...)")
+    cctv_type: Optional[str] = Field(None, description="CCTV 유형 코드")
+    resolution: Optional[str] = Field(None, description="해상도")
+    road_section_id: Optional[str] = Field(None, description="도로 구간 ID")
+    file_create_time: Optional[str] = Field(None, description="파일 생성 시각")
+    road_type: str = Field(default="ex", description="도로 유형 (ex/its)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out: Dict[str, Any] = {}
+        for key, value in data.items():
+            out[_CCTV_FIELDS.get(str(key).lower(), key)] = value
+        return out
+
+    @field_validator("coord_x", "coord_y", mode="before")
+    @classmethod
+    def _parse_coord(cls, value: Any) -> Optional[float]:
+        return _to_float(value)
+
+    @field_validator("name", "url", mode="before")
+    @classmethod
+    def _none_to_empty(cls, value: Any) -> str:
+        return "" if value is None else str(value).strip()
+
+    @field_validator(
+        "format", "cctv_type", "resolution", "road_section_id", "file_create_time", mode="before"
+    )
+    @classmethod
+    def _to_str(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @property
+    def cctv_id(self) -> str:
+        """CCTV 식별자. 영상 URL은 인증 토큰이 바뀌므로 이름·좌표로 만든다."""
+        x = f"{self.coord_x:.5f}" if self.coord_x is not None else ""
+        y = f"{self.coord_y:.5f}" if self.coord_y is not None else ""
+        raw = "|".join([self.road_type, self.name, x, y])
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+    @property
+    def media(self) -> str:
+        """재생 방식."""
+        return cctv_media_type(self.url, self.format)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """API/화면용 딕셔너리."""
+        return {
+            "id": self.cctv_id,
+            "name": self.name,
+            "url": self.url,
+            "media": self.media,
+            "format": self.format,
+            "resolution": self.resolution,
+            "road_type": self.road_type,
+            "lat": self.coord_y,
+            "lon": self.coord_x,
+        }
+
+
+class CctvResponse(BaseModel):
+    """CCTV 응답."""
+
+    items: List[CctvCamera] = Field(default_factory=list)
     total_count: int = 0
 
 

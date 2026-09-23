@@ -1,5 +1,5 @@
 /* 서비스 워커: 앱 셸 캐시, Web Push 수신, 알림 클릭 처리 */
-const CACHE = "its-road-traffic-v1";
+const CACHE = "its-road-traffic-v2";
 const SHELL = ["./", "static/app.css", "static/app.js", "static/icon.svg", "static/icon-192.png", "manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

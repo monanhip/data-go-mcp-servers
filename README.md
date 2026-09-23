@@ -52,7 +52,7 @@ MCP 서버는 Model Context Protocol을 통해 특정 기능을 노출하는 경
 | **💰 금융 정보** | **FSC Financial Info** | 금융위원회 기업 재무정보 (재무제표, 손익계산서) | `data-go-mcp.fsc-financial-info` | [![PyPI](https://img.shields.io/pypi/v/data-go-mcp.fsc-financial-info)](https://pypi.org/project/data-go-mcp.fsc-financial-info/) |
 | **📜 공공 기록** | **Presidential Speeches** | 대통령기록관 연설문 조회 | `data-go-mcp.presidential-speeches` | [![PyPI](https://img.shields.io/pypi/v/data-go-mcp.presidential-speeches)](https://pypi.org/project/data-go-mcp.presidential-speeches/) |
 | **⚗️ 안전 정보** | **MSDS Chemical Info** | 물질안전보건자료(MSDS) 화학물질 정보 | `data-go-mcp.msds-chemical-info` | [![PyPI](https://img.shields.io/pypi/v/data-go-mcp.msds-chemical-info)](https://pypi.org/project/data-go-mcp.msds-chemical-info/) |
-| **🚗 교통 정보** | **ITS Road Traffic** | 전국 고속도로·국도 실시간 소통정보, 사고·돌발 알림 (모바일/데스크탑 웹 앱 포함) | `data-go-mcp.its-road-traffic` | [![PyPI](https://img.shields.io/pypi/v/data-go-mcp.its-road-traffic)](https://pypi.org/project/data-go-mcp.its-road-traffic/) |
+| **🚗 교통 정보** | **ITS Road Traffic** | 전국 고속도로·국도 실시간 소통정보, CCTV, 사고·돌발 알림 (모바일/데스크탑 웹 앱 포함) | `data-go-mcp.its-road-traffic` | [![PyPI](https://img.shields.io/pypi/v/data-go-mcp.its-road-traffic)](https://pypi.org/project/data-go-mcp.its-road-traffic/) |
 
 ## 설치 및 설정
 

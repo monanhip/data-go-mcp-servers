@@ -2,6 +2,7 @@
 
 - 교통소통정보: https://openapi.its.go.kr:9443/trafficInfo
 - 돌발상황정보: https://openapi.its.go.kr:9443/eventInfo
+- CCTV 정보: https://openapi.its.go.kr:9443/cctvInfo
 
 주의:
 - ITS OpenAPI 키는 공공데이터포털 키와 별도로 https://www.its.go.kr/opendata/ 에서 발급받는다.
@@ -14,6 +15,9 @@ import json
 import os
 from .models import (
     KOREA_BBOX,
+    CctvCamera,
+    CctvResponse,
+    CctvType,
     EventKind,
     EventResponse,
     RoadType,
@@ -96,7 +100,12 @@ class ItsRoadTrafficAPIClient:
         if not isinstance(payload, dict):
             raise ItsApiError(f"Unexpected response from {endpoint}: {type(payload).__name__}")
 
-        header = payload.get("header") or {}
+        response_part = payload.get("response")
+        header = (
+            payload.get("header")
+            or (response_part.get("header") if isinstance(response_part, dict) else None)
+            or {}
+        )
         code = header.get("resultCode")
         if code not in _SUCCESS_CODES:
             raise ItsApiError(f"ITS API error {code}: {header.get('resultMsg', 'unknown error')}")
@@ -104,9 +113,19 @@ class ItsRoadTrafficAPIClient:
 
     @staticmethod
     def _extract_items(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """응답에서 item 목록을 꺼낸다. items가 단건이면 dict로 오기도 한다."""
+        """응답에서 item 목록을 꺼낸다. items가 단건이면 dict로 오기도 한다.
+
+        - 소통·돌발: ``{"header": ..., "body": {"items": [...]}}``
+        - CCTV: ``{"response": {"data": [...], "datacount": N}}``
+        """
         body = payload.get("body")
-        items: Any = body.get("items") if isinstance(body, dict) else payload.get("items")
+        response_part = payload.get("response")
+        if isinstance(body, dict):
+            items: Any = body.get("items")
+        elif isinstance(response_part, dict):
+            items = response_part.get("data")
+        else:
+            items = payload.get("items", payload.get("data"))
         if isinstance(items, dict):
             # {"items": {"item": [...]}} 형태 대응
             items = items.get("item", items)
@@ -118,12 +137,15 @@ class ItsRoadTrafficAPIClient:
 
     @staticmethod
     def _total_count(payload: Dict[str, Any], default: int) -> int:
-        for section in (payload.get("body"), payload.get("header")):
-            if isinstance(section, dict) and section.get("totalCount") is not None:
-                try:
-                    return int(section["totalCount"])
-                except (TypeError, ValueError):
-                    pass
+        for section in (payload.get("body"), payload.get("header"), payload.get("response")):
+            if not isinstance(section, dict):
+                continue
+            for key in ("totalCount", "datacount"):
+                if section.get(key) is not None:
+                    try:
+                        return int(section[key])
+                    except (TypeError, ValueError):
+                        pass
         return default
 
     async def get_traffic_info(
@@ -185,3 +207,38 @@ class ItsRoadTrafficAPIClient:
                 row = {**row, "type": road_type.value}
             items.append(TrafficEvent.model_validate(row))
         return EventResponse(items=items, total_count=self._total_count(payload, len(items)))
+
+    async def get_cctv(
+        self,
+        road_type: RoadType = RoadType.EXPRESSWAY,
+        cctv_type: Optional[str] = None,
+        bbox: Optional[Dict[str, float]] = None,
+    ) -> CctvResponse:
+        """CCTV 목록(위치·영상 URL)을 조회.
+
+        Args:
+            road_type: 도로 유형 (ex: 고속도로, its: 국도)
+            cctv_type: 영상 형식 코드. 기본값은 ``ITS_CCTV_TYPE`` 환경변수, 없으면 4
+                (실시간 스트리밍 HLS, HTTPS). 1: HLS(HTTP), 2: 동영상, 3: 정지영상, 5: 동영상(HTTPS)
+            bbox: 조회 영역. 기본값은 전국
+
+        Returns:
+            CctvResponse. 영상 URL에는 만료되는 인증 토큰이 포함될 수 있다.
+        """
+        road_type = RoadType(road_type)
+        if road_type == RoadType.ALL:
+            raise ValueError("CCTV는 road_type ex 또는 its로 조회해야 합니다")
+        cctv_type = CctvType(
+            str(cctv_type or os.getenv("ITS_CCTV_TYPE") or CctvType.STREAM_HTTPS.value)
+        )
+        params: Dict[str, Any] = {"type": road_type.value, "cctvType": cctv_type.value}
+        if bbox:
+            params.update(bbox)
+        payload = await self._request("cctvInfo", params)
+        items = []
+        for row in self._extract_items(payload):
+            camera = CctvCamera.model_validate(row)
+            camera.road_type = road_type.value
+            if camera.url:
+                items.append(camera)
+        return CctvResponse(items=items, total_count=self._total_count(payload, len(items)))

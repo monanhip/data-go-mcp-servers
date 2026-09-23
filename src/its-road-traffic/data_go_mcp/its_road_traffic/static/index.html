@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
-  <meta name="description" content="전국 고속도로·국도 실시간 소통정보와 사고·돌발 알림">
+  <meta name="description" content="전국 고속도로·국도 실시간 소통정보, CCTV, 사고·돌발 알림">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="도로소통">
@@ -12,8 +12,8 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="static/icon-192.png">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
+        integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous">
   <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
@@ -35,10 +35,14 @@
 
   <button id="alertBanner" class="alert-banner" type="button" hidden></button>
 
-  <main id="layout" class="layout" data-view="roads">
-    <!-- 노선 목록 -->
+  <main id="layout" class="layout" data-view="roads" data-side="roads">
+    <!-- 노선 소통 목록 -->
     <aside id="roadsPane" class="pane roads-pane" aria-label="노선 목록">
-      <div class="seg desktop-only" role="tablist" aria-label="도로 유형">
+      <div class="side-switch desktop-only" role="tablist" aria-label="목록 종류">
+        <button type="button" role="tab" data-side="roads" aria-selected="true">노선 소통</button>
+        <button type="button" role="tab" data-side="cctv" aria-selected="false">CCTV</button>
+      </div>
+      <div class="seg" role="tablist" aria-label="도로 유형" data-seg="roads">
         <button type="button" role="tab" data-road-type="ex" aria-selected="true">고속도로</button>
         <button type="button" role="tab" data-road-type="its" aria-selected="false">국도</button>
       </div>
@@ -58,13 +62,52 @@
       <p id="roadsUpdated" class="updated"></p>
     </aside>
 
+    <!-- CCTV: 노선별 목록 / 전국 지도 -->
+    <aside id="cctvPane" class="pane cctv-pane" aria-label="CCTV">
+      <div class="side-switch desktop-only" role="tablist" aria-label="목록 종류">
+        <button type="button" role="tab" data-side="roads" aria-selected="false">노선 소통</button>
+        <button type="button" role="tab" data-side="cctv" aria-selected="true">CCTV</button>
+      </div>
+      <div class="cctv-head">
+        <div class="seg" role="tablist" aria-label="CCTV 도로 유형" data-seg="cctv">
+          <button type="button" role="tab" data-cctv-type="all" aria-selected="true">전체</button>
+          <button type="button" role="tab" data-cctv-type="ex" aria-selected="false">고속도로</button>
+          <button type="button" role="tab" data-cctv-type="its" aria-selected="false">국도</button>
+        </div>
+        <div class="mode mobile-only" role="tablist" aria-label="보기 방식">
+          <button type="button" role="tab" data-cctv-mode="list" aria-selected="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>노선별 목록
+          </button>
+          <button type="button" role="tab" data-cctv-mode="map" aria-selected="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4-6 2v14l6-2 6 2 6-2V4l-6 2zM9 4v14m6-12v14"/></svg>전국 지도
+          </button>
+        </div>
+      </div>
+      <div class="cctv-list-view">
+        <div class="list-tools">
+          <label class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></svg>
+            <input id="cctvSearch" type="search" placeholder="노선·지점 검색 (예: 경부, 판교)" autocomplete="off">
+          </label>
+          <p id="cctvSummary" class="updated inline"></p>
+        </div>
+        <ul id="cctvList" class="cctv-groups"></ul>
+      </div>
+      <div class="map-slot cctv-map-slot"></div>
+    </aside>
+
     <!-- 지도 -->
-    <section id="mapPane" class="pane map-pane" aria-label="지도">
+    <section id="mapPane" class="pane map-pane" aria-label="전국 지도">
       <div id="map" class="map"></div>
+      <div class="map-layers" role="group" aria-label="지도 레이어">
+        <button type="button" data-layer="traffic" aria-pressed="true"><i class="lg slow"></i>소통</button>
+        <button type="button" data-layer="events" aria-pressed="true"><i class="mk-dot kind-acc"></i>돌발</button>
+        <button type="button" data-layer="cctv" aria-pressed="true"><i class="cam-dot"></i>CCTV</button>
+      </div>
       <div class="map-legend" aria-hidden="true">
         <span><i class="lg smooth"></i>원활</span><span><i class="lg slow"></i>서행</span><span><i class="lg jam"></i>정체</span>
         <span class="sep"></span>
-        <span><i class="mk-dot kind-acc"></i>사고</span><span><i class="mk-dot kind-ete"></i>돌발</span><span><i class="mk-dot kind-cor"></i>공사</span>
+        <span><i class="mk-dot kind-acc"></i>사고</span><span><i class="mk-dot kind-ete"></i>돌발</span><span><i class="mk-dot kind-cor"></i>공사</span><span><i class="cam-dot"></i>CCTV</span>
       </div>
       <button id="fitAllBtn" class="map-btn" type="button">전국 보기</button>
     </section>
@@ -73,7 +116,7 @@
     <section id="detailPane" class="pane detail-pane" aria-label="노선 상세">
       <div id="roadDetail" class="empty-state">
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M18 6 8 42M30 6l10 36M24 9v6m0 7v6m0 7v6"/></svg>
-        <p>노선을 선택하면 방향별 소통 상황과<br>진행 중인 돌발 정보를 볼 수 있습니다.</p>
+        <p>노선을 선택하면 방향별 소통 상황,<br>CCTV, 진행 중인 돌발 정보를 볼 수 있습니다.</p>
       </div>
     </section>
 
@@ -150,24 +193,48 @@
   </main>
 
   <nav class="tabbar" aria-label="화면 이동">
-    <button type="button" data-tab="ex" aria-current="page">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3 4 21M16 3l4 18M12 4v3m0 4v3m0 4v3"/></svg><span>고속도로</span>
+    <button type="button" data-tab="roads" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3 4 21M16 3l4 18M12 4v3m0 4v3m0 4v3"/></svg><span>노선</span>
     </button>
-    <button type="button" data-tab="its">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21 10 3M19 21 14 3"/></svg><span>국도</span>
+    <button type="button" data-tab="map">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4-6 2v14l6-2 6 2 6-2V4l-6 2zM9 4v14m6-12v14"/></svg><span>전국지도</span>
     </button>
     <button type="button" data-tab="events">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20zM12 10v4m0 3v.5"/></svg><span>돌발</span><em id="tabEventBadge" class="tab-badge" hidden></em>
+    </button>
+    <button type="button" data-tab="cctv">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h12v10H3zM15 10l6-3v10l-6-3"/></svg><span>CCTV</span>
     </button>
     <button type="button" data-tab="alerts">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></svg><span>알림</span>
     </button>
   </nav>
 
+  <!-- CCTV 영상 -->
+  <dialog id="player" class="player" aria-labelledby="playerTitle">
+    <div class="player-head">
+      <div>
+        <p id="playerRoad" class="muted"></p>
+        <h2 id="playerTitle">CCTV</h2>
+      </div>
+      <button id="playerClose" class="icon-btn" type="button" aria-label="닫기">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div id="playerMedia" class="player-media"></div>
+    <p id="playerStatus" class="player-status" aria-live="polite"></p>
+    <div class="player-actions">
+      <button id="playerPrev" class="btn" type="button">◀ 이전</button>
+      <button id="playerMap" class="btn" type="button">지도에서 위치</button>
+      <a id="playerOpen" class="btn" href="#" target="_blank" rel="noopener">새 창</a>
+      <button id="playerNext" class="btn" type="button">다음 ▶</button>
+    </div>
+  </dialog>
+
   <div id="toasts" class="toasts" aria-live="assertive"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
+          integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
   <script src="static/app.js"></script>
 </body>
 </html>

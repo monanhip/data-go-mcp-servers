@@ -9,6 +9,8 @@ import random
 import time
 from .models import (
     EVENT_KIND_LABELS,
+    CctvCamera,
+    CctvResponse,
     EventKind,
     EventResponse,
     RoadType,
@@ -16,9 +18,10 @@ from .models import (
     TrafficLink,
     TrafficResponse,
 )
-from .roads import CATALOG, RoadInfo
+from .roads import CATALOG, RoadInfo, path_length_km, point_on_path  # noqa: F401
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
+from xml.sax.saxutils import escape
 
 
 _DIRECTIONS = ("상행", "하행")
@@ -51,34 +54,6 @@ _MESSAGES = {
 _NEW_EVENT_WEIGHTS = {"acc": 5, "ete": 4, "cor": 1, "wea": 1, "dis": 0.3}
 
 _TYPE_LABEL = {"ex": "고속도로", "its": "국도"}
-
-
-def _segment_lengths(path: Tuple[Tuple[float, float], ...]) -> List[float]:
-    lengths = []
-    for (lat1, lon1), (lat2, lon2) in zip(path, path[1:]):
-        dy = (lat2 - lat1) * 111.0
-        dx = (lon2 - lon1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
-        lengths.append(math.hypot(dx, dy))
-    return lengths
-
-
-def point_on_path(path: Tuple[Tuple[float, float], ...], fraction: float) -> Tuple[float, float]:
-    """경로 위 fraction(0~1) 지점의 (위도, 경도)."""
-    if len(path) == 1:
-        return path[0]
-    lengths = _segment_lengths(path)
-    target = max(0.0, min(1.0, fraction)) * sum(lengths)
-    for (start, end), length in zip(zip(path, path[1:]), lengths):
-        if target <= length or length == 0:
-            ratio = target / length if length else 0.0
-            return (start[0] + (end[0] - start[0]) * ratio, start[1] + (end[1] - start[1]) * ratio)
-        target -= length
-    return path[-1]
-
-
-def path_length_km(path: Tuple[Tuple[float, float], ...]) -> float:
-    """경로 길이(km, 대략)."""
-    return sum(_segment_lengths(path))
 
 
 def _rush_factor(now: datetime) -> float:
@@ -278,3 +253,101 @@ class DemoTrafficSource:
                         )
                     )
         return TrafficResponse(items=items, total_count=len(items))
+
+    # ------------------------------------------------------------ CCTV
+    def _build_cameras(self) -> Dict[str, Dict]:
+        cameras: Dict[str, Dict] = {}
+        for road in CATALOG:
+            label = road.aliases[0] if road.road_type == "ex" and road.aliases else road.name
+            length = path_length_km(road.path)
+            count = max(3, int(length / 25))
+            for i in range(count):
+                fraction = (i + 0.5) / count
+                lat, lon = point_on_path(road.path, fraction)
+                slug = f"{road.road_type}-{road.route_no}-{i}"
+                cameras[slug] = {
+                    "cctvname": f"[{label}] {round(length * fraction)}km 지점",
+                    "cctvurl": f"api/demo/cctv/{slug}.svg",
+                    "coordx": round(lon, 6),
+                    "coordy": round(lat, 6),
+                    "cctvformat": "IMAGE",
+                    "cctvtype": 3,
+                    "cctvresolution": "640x360",
+                    "_road_type": road.road_type,
+                }
+        # 노선을 알 수 없는 CCTV (대괄호 없는 이름)
+        for i, (name, lat, lon) in enumerate(
+            [("세종대로 광화문", 37.5716, 126.9769), ("부산 서면교차로", 35.1577, 129.0597)]
+        ):
+            cameras[f"its-x-{i}"] = {
+                "cctvname": name,
+                "cctvurl": f"api/demo/cctv/its-x-{i}.svg",
+                "coordx": lon,
+                "coordy": lat,
+                "cctvformat": "IMAGE",
+                "_road_type": "its",
+            }
+        return cameras
+
+    @property
+    def cameras(self) -> Dict[str, Dict]:
+        """데모 CCTV (slug → 원본)."""
+        if not hasattr(self, "_cameras"):
+            self._cameras = self._build_cameras()
+        return self._cameras
+
+    async def get_cctv(
+        self,
+        road_type: RoadType = RoadType.EXPRESSWAY,
+        cctv_type: Optional[str] = None,
+        bbox: Optional[Dict[str, float]] = None,
+    ) -> CctvResponse:
+        """CCTV 목록 (데모). 영상은 :func:`render_cctv_svg`로 만든 정지영상이다."""
+        road_type = RoadType(road_type)
+        items = []
+        for raw in self.cameras.values():
+            if road_type != RoadType.ALL and raw["_road_type"] != road_type.value:
+                continue
+            camera = CctvCamera.model_validate(raw)
+            camera.road_type = raw["_road_type"]
+            items.append(camera)
+        return CctvResponse(items=items, total_count=len(items))
+
+    def render_cctv(self, slug: str) -> Optional[str]:
+        """데모 CCTV 화면 SVG. 없는 slug면 None."""
+        raw = self.cameras.get(slug)
+        if raw is None:
+            return None
+        return render_cctv_svg(raw["cctvname"], self._now(), seed=slug)
+
+
+def render_cctv_svg(name: str, now: datetime, seed: str = "") -> str:
+    """도로 CCTV처럼 보이는 데모 화면 (SVG). 5초마다 차량 위치가 바뀐다."""
+    rng = random.Random(f"{seed}|{int(now.timestamp() // 5)}")
+    cars = []
+    for lane in range(4):
+        for _ in range(rng.randint(1, 4)):
+            depth = rng.uniform(0.05, 1.0)  # 0: 멀리, 1: 가까이
+            y = 150 + depth * 200
+            half = 40 + depth * 280
+            lane_w = 2 * half / 4
+            x = 320 - half + lane_w * (lane + 0.5) + rng.uniform(-6, 6) * depth
+            w, h = 14 + 48 * depth, 9 + 28 * depth
+            color = rng.choice(["#e2e8f0", "#94a3b8", "#1e293b", "#dc2626", "#2563eb", "#f8fafc"])
+            cars.append(
+                f'<rect x="{x - w / 2:.1f}" y="{y - h:.1f}" width="{w:.1f}" height="{h:.1f}" '
+                f'rx="{3 * depth + 1:.1f}" fill="{color}" stroke="#0f172a" stroke-width="1"/>'
+            )
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360">
+<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#475569"/><stop offset="1" stop-color="#94a3b8"/></linearGradient></defs>
+<rect width="640" height="150" fill="url(#sky)"/>
+<rect y="140" width="640" height="220" fill="#3f6212"/>
+<polygon points="280,150 360,150 640,360 0,360" fill="#334155"/>
+<g stroke="#facc15" stroke-width="3" stroke-dasharray="18 16"><line x1="300" y1="150" x2="160" y2="360"/><line x1="320" y1="150" x2="320" y2="360"/><line x1="340" y1="150" x2="480" y2="360"/></g>
+{"".join(cars)}
+<rect x="0" y="0" width="640" height="30" fill="#000" opacity=".55"/>
+<text x="10" y="21" font-family="sans-serif" font-size="16" fill="#fff">{escape(name)}</text>
+<text x="630" y="21" font-family="monospace" font-size="15" fill="#fff" text-anchor="end">{stamp}</text>
+<text x="630" y="350" font-family="sans-serif" font-size="13" fill="#fde047" text-anchor="end">DEMO</text>
+</svg>"""

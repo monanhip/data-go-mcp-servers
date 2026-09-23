@@ -1,7 +1,7 @@
 [project]
 name = "data-go-mcp.its-road-traffic"
 version = "0.1.0"
-description = "MCP server and mobile/desktop web dashboard for nationwide road traffic and incident alerts from Korea ITS (국가교통정보센터)"
+description = "MCP server and mobile/desktop web dashboard for nationwide road traffic, CCTV and incident alerts from Korea ITS (국가교통정보센터)"
 readme = "README.md"
 authors = [
     { name = "Data.go.kr MCP Servers Contributors" }

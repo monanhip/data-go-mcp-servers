@@ -4,9 +4,10 @@ import asyncio
 import logging
 import time
 from .models import EventKind, EventResponse, RoadType, TrafficLink, TrafficResponse
-from .roads import describe_event, road_detail, summarize_roads
+from .roads import describe_cctv, describe_event, group_cctv, road_detail, summarize_roads
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Protocol, Set
+from urllib.parse import urlparse
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class TrafficService:
         demo: bool = False,
         clock: Callable[[], float] = time.monotonic,
         seen_ttl: float = 24 * 3600.0,
+        cctv_ttl: float = 1800.0,
     ):
         """서비스 초기화.
 
@@ -72,6 +74,7 @@ class TrafficService:
             demo: 데모 모드 여부
             clock: 단조 시계 (테스트용)
             seen_ttl: 사라진 돌발을 기억하는 시간(초). 같은 돌발이 다시 잡혀도 중복 알림하지 않는다.
+            cctv_ttl: CCTV 목록 캐시 유효시간(초). 영상 URL 토큰이 만료되기 전에 갱신되도록 잡는다.
         """
         self.source = source
         self.event_interval = event_interval
@@ -79,6 +82,7 @@ class TrafficService:
         self.demo = demo
         self.clock = clock
         self.seen_ttl = seen_ttl
+        self.cctv_ttl = cctv_ttl
 
         self._links: Dict[str, List[TrafficLink]] = {}
         self._links_at: Dict[str, float] = {}
@@ -91,6 +95,11 @@ class TrafficService:
         self._seen: Dict[str, float] = {}
         self._baseline_done = False
         self._recent_alerts: List[Dict[str, Any]] = []
+        self._cctv: Dict[str, List[Dict[str, Any]]] = {}
+        self._cctv_at: Dict[str, float] = {}
+        self._cctv_updated: Dict[str, str] = {}
+        self._cctv_locks: Dict[str, asyncio.Lock] = {}
+        self._cctv_hosts: Set[str] = set()
 
         self._subscribers: Set[asyncio.Queue] = set()
         self._notifiers: List[Notifier] = []
@@ -227,6 +236,69 @@ class TrafficService:
         """최근 감지된 신규 돌발 (최신순)."""
         return list(self._recent_alerts)
 
+    # ------------------------------------------------------------------ CCTV
+    @property
+    def supports_cctv(self) -> bool:
+        """데이터 소스가 CCTV를 제공하는지 여부."""
+        return hasattr(self.source, "get_cctv")
+
+    async def get_cctv(self, road_type: str) -> List[Dict[str, Any]]:
+        """도로 유형별 CCTV 목록 (캐시)."""
+        road_type = RoadType(road_type).value
+        if road_type == "all":
+            return await self.get_cctv("ex") + await self.get_cctv("its")
+        if not self.supports_cctv:
+            return []
+        lock = self._cctv_locks.setdefault(road_type, asyncio.Lock())
+        async with lock:
+            fetched_at = self._cctv_at.get(road_type)
+            if fetched_at is not None and self.clock() - fetched_at < self.cctv_ttl:
+                return self._cctv[road_type]
+            try:
+                response = await self.source.get_cctv(road_type=RoadType(road_type))
+            except Exception as e:
+                self.last_error = f"cctvInfo({road_type}): {e}"
+                logger.warning("Failed to fetch CCTV: %s", e)
+                if road_type in self._cctv:
+                    return self._cctv[road_type]
+                raise
+            cameras = [describe_cctv(item) for item in response.items]
+            for camera in cameras:
+                host = urlparse(camera["url"]).hostname
+                if host:
+                    self._cctv_hosts.add(host.lower())
+            self._cctv[road_type] = cameras
+            self._cctv_at[road_type] = self.clock()
+            self._cctv_updated[road_type] = datetime.now().isoformat(timespec="seconds")
+            return cameras
+
+    async def cctv_groups(
+        self, road_type: str, query: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """노선별로 묶은 CCTV 목록. query로 노선명·지점명을 거른다."""
+        cameras = await self.get_cctv(road_type)
+        if query:
+            q = query.replace(" ", "").lower()
+            cameras = [
+                c
+                for c in cameras
+                if q in c["name"].replace(" ", "").lower()
+                or q in c["road_name"].replace(" ", "").lower()
+                or q == (c.get("route_no") or "")
+            ]
+        return group_cctv(cameras)
+
+    def is_allowed_stream(self, url: str) -> bool:
+        """프록시 허용 여부: CCTV 목록에 나온 호스트의 http(s) URL만 허용한다."""
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and (parsed.hostname or "").lower() in (
+            self._cctv_hosts
+        )
+
+    def allow_stream_host(self, host: str) -> None:
+        """리다이렉트 등으로 확인된 CCTV 영상 호스트를 허용 목록에 추가."""
+        self._cctv_hosts.add(host.lower())
+
     # ------------------------------------------------------------------ 노선
     async def roads(self, road_type: str) -> List[Dict[str, Any]]:
         """노선 목록 요약."""
@@ -241,7 +313,16 @@ class TrafficService:
             return None
         links = await self.get_links(road_type)
         events = await self.get_events()
-        return road_detail(key, links, events)
+        detail = road_detail(key, links, events)
+        if detail is not None:
+            try:
+                cameras = await self.get_cctv(road_type)
+            except Exception:
+                cameras = []  # CCTV 조회 실패가 노선 상세를 막지 않는다
+            detail["cctv"] = next(
+                (group["items"] for group in group_cctv(cameras) if group["key"] == key), []
+            )
+        return detail
 
     # ---------------------------------------------------------------- 폴링
     async def _poll_loop(self) -> None:
@@ -279,6 +360,8 @@ class TrafficService:
             "traffic_ttl": self.traffic_ttl,
             "events_updated": self._events_updated,
             "traffic_updated": dict(self._links_updated),
+            "cctv_updated": dict(self._cctv_updated),
+            "cctv_ttl": self.cctv_ttl,
             "event_count": len(self._events),
             "subscribers": len(self._subscribers),
             "last_error": self.last_error,

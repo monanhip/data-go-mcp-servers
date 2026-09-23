@@ -1,7 +1,9 @@
 """노선 카탈로그와 링크 단위 소통정보 → 노선 단위 요약 집계."""
 
+import math
 import re
 from .models import (
+    CctvCamera,
     CongestionGrade,
     TrafficEvent,
     TrafficLink,
@@ -11,7 +13,7 @@ from .models import (
 )
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 # 알림 대상이 되는 긴급 돌발 유형
@@ -512,6 +514,9 @@ def summarize_roads(
             }
 
     for key, summary in summaries.items():
+        catalog = find_catalog_road(summary["road_type"], summary["name"])
+        # 지도에 노선을 그리기 위한 대략적인 경로 (카탈로그 노선만)
+        summary["path"] = [list(point) for point in catalog.path] if catalog else []
         counts = event_counts.get(key, {"events": 0, "urgent": 0})
         summary["event_count"] = counts["events"]
         summary["urgent_count"] = counts["urgent"]
@@ -581,3 +586,140 @@ def road_detail(
         "directions": directions,
         "events": road_events,
     }
+
+
+# ---------------------------------------------------------------- 경로 기하
+
+
+def _segment_lengths(path: Sequence[Tuple[float, float]]) -> List[float]:
+    lengths = []
+    for (lat1, lon1), (lat2, lon2) in zip(path, path[1:]):
+        dy = (lat2 - lat1) * 111.0
+        dx = (lon2 - lon1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
+        lengths.append(math.hypot(dx, dy))
+    return lengths
+
+
+def path_length_km(path: Sequence[Tuple[float, float]]) -> float:
+    """경로 길이(km, 대략)."""
+    return sum(_segment_lengths(path))
+
+
+def point_on_path(path: Sequence[Tuple[float, float]], fraction: float) -> Tuple[float, float]:
+    """경로 위 fraction(0~1) 지점의 (위도, 경도)."""
+    if len(path) == 1:
+        return path[0]
+    lengths = _segment_lengths(path)
+    target = max(0.0, min(1.0, fraction)) * sum(lengths)
+    for (start, end), length in zip(zip(path, path[1:]), lengths):
+        if target <= length or length == 0:
+            ratio = target / length if length else 0.0
+            return (start[0] + (end[0] - start[0]) * ratio, start[1] + (end[1] - start[1]) * ratio)
+        target -= length
+    return path[-1]
+
+
+def path_fraction(path: Sequence[Tuple[float, float]], lat: float, lon: float) -> float:
+    """점을 경로에 투영했을 때 시점에서의 위치(0~1). 노선을 따라 정렬할 때 쓴다."""
+    if len(path) < 2:
+        return 0.0
+    lengths = _segment_lengths(path)
+    total = sum(lengths) or 1.0
+    best = (float("inf"), 0.0)
+    walked = 0.0
+    kx = 111.0 * math.cos(math.radians(lat))
+    for (start, end), length in zip(zip(path, path[1:]), lengths):
+        ax, ay = start[1] * kx, start[0] * 111.0
+        bx, by = end[1] * kx, end[0] * 111.0
+        px, py = lon * kx, lat * 111.0
+        dx, dy = bx - ax, by - ay
+        seg2 = dx * dx + dy * dy
+        t = 0.0 if seg2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg2))
+        dist = math.hypot(ax + t * dx - px, ay + t * dy - py)
+        if dist < best[0]:
+            best = (dist, (walked + t * length) / total)
+        walked += length
+    return best[1]
+
+
+# ---------------------------------------------------------------- CCTV
+
+UNCLASSIFIED_ROAD = "노선 미분류"
+_BRACKET_RE = re.compile(r"^\s*[\[(]([^\])]+)[\])]\s*(.*)$")
+
+
+def cctv_road(road_type: str, name: str) -> Tuple[str, Optional[str], str]:
+    """CCTV 명칭에서 (노선명, 노선번호, 지점명)을 뽑는다.
+
+    ITS CCTV 명칭은 보통 ``[경부선] 양재``처럼 대괄호 안에 노선명이 들어 있다.
+    """
+    text = (name or "").strip()
+    match = _BRACKET_RE.match(text)
+    if match:
+        raw_road, location = match.group(1).strip(), match.group(2).strip()
+        road_name, route_no = canonical_road(road_type, raw_road)
+        return road_name, route_no, location or text
+    # 대괄호가 없으면 첫 단어가 노선명인지 확인
+    first, _, rest = text.partition(" ")
+    found = find_catalog_road(road_type, first) if first else None
+    if found and rest:
+        return found.name, found.route_no, rest.strip()
+    return UNCLASSIFIED_ROAD, None, text
+
+
+def describe_cctv(camera: CctvCamera) -> Dict:
+    """CCTV를 노선 정보까지 붙인 딕셔너리로 변환."""
+    data = camera.to_dict()
+    road_name, route_no, location = cctv_road(camera.road_type, camera.name)
+    data["road_name"] = road_name
+    data["route_no"] = route_no
+    data["road_key"] = road_key(camera.road_type, road_name)
+    data["location"] = location
+    catalog = find_catalog_road(camera.road_type, road_name)
+    position = None
+    if catalog and catalog.path and camera.coord_y is not None and camera.coord_x is not None:
+        position = round(path_fraction(catalog.path, camera.coord_y, camera.coord_x), 4)
+    data["position"] = position
+    return data
+
+
+def group_cctv(cameras: Iterable[Dict], road_type: Optional[str] = None) -> List[Dict]:
+    """CCTV를 노선별로 묶는다. 노선 안에서는 기점→종점 순(경로를 모르면 이름 순)으로 정렬.
+
+    Args:
+        cameras: :func:`describe_cctv` 결과 목록
+        road_type: ``ex``/``its``로 거르기 (None이면 전체)
+    """
+    groups: Dict[str, Dict] = {}
+    for camera in cameras:
+        if road_type and camera["road_type"] != road_type:
+            continue
+        group = groups.setdefault(
+            camera["road_key"],
+            {
+                "key": camera["road_key"],
+                "road_type": camera["road_type"],
+                "name": camera["road_name"],
+                "route_no": camera.get("route_no"),
+                "in_catalog": find_catalog_road(camera["road_type"], camera["road_name"])
+                in CATALOG,
+                "items": [],
+            },
+        )
+        group["items"].append(camera)
+
+    for group in groups.values():
+        group["items"].sort(
+            key=lambda c: (
+                c["position"] is None,
+                c["position"] or 0.0,
+                c.get("location") or c["name"],
+            )
+        )
+        group["count"] = len(group["items"])
+
+    def sort_key(group: Dict) -> Tuple:
+        unclassified = group["name"] == UNCLASSIFIED_ROAD
+        return (unclassified, group["road_type"] != "ex") + _sort_key(group)
+
+    return sorted(groups.values(), key=sort_key)
