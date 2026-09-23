@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="전국 고속도로·국도 실시간 소통정보와 사고·돌발 알림">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="도로소통">
+  <title>전국 도로 소통정보</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="static/icon-192.png">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="backBtn" class="icon-btn" type="button" aria-label="뒤로" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M11 4 5 28M21 4l6 24M16 6v4m0 5v4m0 5v4"/></svg>
+      <h1 id="pageTitle">전국 도로 소통정보</h1>
+    </div>
+    <span id="demoBadge" class="badge demo" hidden title="ITS API 키 없이 가상 데이터로 실행 중">데모</span>
+    <span id="liveStatus" class="live" data-state="connecting" title="실시간 연결 상태"><i></i><span>연결 중</span></span>
+    <button id="alertsBtn" class="icon-btn desktop-only" type="button" aria-label="알림 설정" aria-haspopup="dialog">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></svg>
+      <span id="alertsBtnBadge" class="dot-badge" hidden></span>
+    </button>
+  </header>
+
+  <button id="alertBanner" class="alert-banner" type="button" hidden></button>
+
+  <main id="layout" class="layout" data-view="roads">
+    <!-- 노선 목록 -->
+    <aside id="roadsPane" class="pane roads-pane" aria-label="노선 목록">
+      <div class="seg desktop-only" role="tablist" aria-label="도로 유형">
+        <button type="button" role="tab" data-road-type="ex" aria-selected="true">고속도로</button>
+        <button type="button" role="tab" data-road-type="its" aria-selected="false">국도</button>
+      </div>
+      <div class="list-tools">
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></svg>
+          <input id="roadSearch" type="search" placeholder="노선 검색 (예: 경부, 1, 국도3)" autocomplete="off">
+        </label>
+        <div class="sort" role="radiogroup" aria-label="정렬">
+          <button type="button" data-sort="route" aria-pressed="true">노선순</button>
+          <button type="button" data-sort="jam" aria-pressed="false">정체순</button>
+          <button type="button" data-sort="events" aria-pressed="false">돌발순</button>
+          <button type="button" id="watchedOnly" class="toggle" aria-pressed="false" title="관심 노선만 보기">★ 관심</button>
+        </div>
+      </div>
+      <ul id="roadList" class="road-list" aria-live="polite"></ul>
+      <p id="roadsUpdated" class="updated"></p>
+    </aside>
+
+    <!-- 지도 -->
+    <section id="mapPane" class="pane map-pane" aria-label="지도">
+      <div id="map" class="map"></div>
+      <div class="map-legend" aria-hidden="true">
+        <span><i class="lg smooth"></i>원활</span><span><i class="lg slow"></i>서행</span><span><i class="lg jam"></i>정체</span>
+        <span class="sep"></span>
+        <span><i class="mk-dot kind-acc"></i>사고</span><span><i class="mk-dot kind-ete"></i>돌발</span><span><i class="mk-dot kind-cor"></i>공사</span>
+      </div>
+      <button id="fitAllBtn" class="map-btn" type="button">전국 보기</button>
+    </section>
+
+    <!-- 노선 상세 -->
+    <section id="detailPane" class="pane detail-pane" aria-label="노선 상세">
+      <div id="roadDetail" class="empty-state">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M18 6 8 42M30 6l10 36M24 9v6m0 7v6m0 7v6"/></svg>
+        <p>노선을 선택하면 방향별 소통 상황과<br>진행 중인 돌발 정보를 볼 수 있습니다.</p>
+      </div>
+    </section>
+
+    <!-- 돌발 피드 -->
+    <section id="feedPane" class="pane feed-pane" aria-label="돌발 상황">
+      <div class="pane-head">
+        <h2>진행 중인 돌발 <span id="eventCount" class="count"></span></h2>
+        <p id="eventsUpdated" class="updated inline"></p>
+      </div>
+      <div id="kindFilter" class="chips" role="group" aria-label="돌발 유형 필터"></div>
+      <ul id="eventList" class="event-list"></ul>
+    </section>
+
+    <!-- 알림 설정 -->
+    <section id="alertsPane" class="pane alerts-pane" aria-label="알림 설정" role="dialog" aria-modal="false">
+      <div class="pane-head">
+        <h2>사고·돌발 알림</h2>
+        <button id="alertsClose" class="icon-btn desktop-only" type="button" aria-label="닫기">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div>
+            <strong>알림 받기</strong>
+            <p id="notifyStatus" class="muted">이 기기에서 알림 권한을 허용해야 합니다.</p>
+          </div>
+          <button id="notifyBtn" class="btn primary" type="button">알림 켜기</button>
+        </div>
+        <div class="row">
+          <div>
+            <strong>앱을 닫아도 알림 (푸시)</strong>
+            <p id="pushStatus" class="muted">서버 설정을 확인하는 중…</p>
+          </div>
+          <button id="pushBtn" class="btn" type="button" disabled>푸시 켜기</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <strong>알림 받을 유형</strong>
+        <div id="alertKinds" class="chips wrap" role="group" aria-label="알림 받을 돌발 유형"></div>
+        <strong>도로</strong>
+        <div id="alertRoadTypes" class="chips" role="group" aria-label="알림 받을 도로 유형">
+          <button type="button" data-road-type="ex" aria-pressed="true">고속도로</button>
+          <button type="button" data-road-type="its" aria-pressed="true">국도</button>
+        </div>
+        <label class="switch">
+          <input id="onlyWatched" type="checkbox">
+          <span>관심 노선(★)에서 발생한 것만 알림</span>
+        </label>
+        <div id="watchedList" class="watched"></div>
+        <label class="switch">
+          <input id="soundOn" type="checkbox" checked>
+          <span>알림음·진동</span>
+        </label>
+      </div>
+
+      <div id="demoTools" class="card" hidden>
+        <strong>데모: 알림 테스트</strong>
+        <p class="muted">가상 사고를 발생시켜 알림이 오는지 확인합니다.</p>
+        <div class="chips">
+          <button class="btn" type="button" data-demo-kind="acc">사고 발생</button>
+          <button class="btn" type="button" data-demo-kind="ete">돌발 발생</button>
+          <button class="btn" type="button" data-demo-kind="cor">공사 발생</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <strong>최근 알림</strong>
+        <ul id="alertHistory" class="event-list compact"></ul>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="화면 이동">
+    <button type="button" data-tab="ex" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3 4 21M16 3l4 18M12 4v3m0 4v3m0 4v3"/></svg><span>고속도로</span>
+    </button>
+    <button type="button" data-tab="its">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21 10 3M19 21 14 3"/></svg><span>국도</span>
+    </button>
+    <button type="button" data-tab="events">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20zM12 10v4m0 3v.5"/></svg><span>돌발</span><em id="tabEventBadge" class="tab-badge" hidden></em>
+    </button>
+    <button type="button" data-tab="alerts">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></svg><span>알림</span>
+    </button>
+  </nav>
+
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="static/app.js"></script>
+</body>
+</html>

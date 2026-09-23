@@ -12,7 +12,8 @@ data-go-mcp-servers/
 │   ├── fsc-financial-info/           # 금융감독원 금융회사 정보
 │   ├── presidential-speeches/        # 대통령기록관 연설기록
 │   ├── pps-narajangteo/              # 조달청 나라장터 정보
-│   └── msds-chemical-info/           # 화학물질안전원 MSDS 정보
+│   ├── msds-chemical-info/           # 화학물질안전원 MSDS 정보
+│   └── its-road-traffic/             # ITS 국가교통정보센터 소통·돌발 정보 (MCP + 웹 대시보드)
 │       ├── pyproject.toml            # 패키지 설정 (PyPI 배포용)
 │       ├── data_go_mcp/
 │       │   └── {module_name}/
